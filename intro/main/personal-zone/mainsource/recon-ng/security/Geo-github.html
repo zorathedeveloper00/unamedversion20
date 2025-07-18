@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GitHub Users Geo Explorer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; background: #f0f2f5; }
+    #app { display: flex; flex-direction: column; height: 100vh; }
+    header {
+      background: #24292e; color: white; padding: 12px 20px;
+      text-align: center; font-size: 1.3rem; font-weight: bold;
+    }
+    #controls {
+      background: white; padding: 12px 20px;
+      display: flex; gap: 10px; align-items: center;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+      flex-wrap: wrap;
+    }
+    input, button {
+      padding: 8px 12px;
+      font-size: 1rem;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+    }
+    button {
+      background: #2ea44f;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    button:disabled {
+      background: #94d3a2;
+      cursor: not-allowed;
+    }
+    #map {
+      flex-grow: 1;
+    }
+    #status {
+      font-size: 0.9rem;
+      color: #333;
+    }
+    .leaflet-popup-content a {
+      color: #0366d6;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <header>🌍 GitHub Users Geo Explorer</header>
+  <div id="controls">
+    <input id="locationInput" type="text" placeholder="Enter a location (e.g., Berlin, India)" />
+    <button id="searchBtn">Search</button>
+    <button id="reloadBtn">Reload</button>
+    <button id="exportBtn" disabled>Export CSV</button>
+    <span id="status"></span>
+  </div>
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const map = L.map('map').setView([20, 0], 2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  const locationInput = document.getElementById('locationInput');
+  const searchBtn = document.getElementById('searchBtn');
+  const reloadBtn = document.getElementById('reloadBtn');
+  const exportBtn = document.getElementById('exportBtn');
+  const status = document.getElementById('status');
+
+  let markers = [];
+  let usersData = [];
+  let currentLocation = '';
+  let autoRefresh = null;
+
+  function clearMap() {
+    markers.forEach(m => map.removeLayer(m));
+    markers = [];
+    usersData = [];
+    exportBtn.disabled = true;
+  }
+
+  function setStatus(text, error = false) {
+    status.textContent = text;
+    status.style.color = error ? 'red' : '#333';
+  }
+
+  async function geocodeLocation(location) {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(location)}&limit=1`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!data.length) throw new Error('Location not found');
+    return {
+      lat: parseFloat(data[0].lat),
+      lon: parseFloat(data[0].lon),
+      name: data[0].display_name
+    };
+  }
+
+  async function fetchGitHubUsers(location, page = 1, perPage = 30) {
+    const url = `https://api.github.com/search/users?q=location:"${location}"&per_page=${perPage}&page=${page}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
+    return await res.json();
+  }
+
+  async function fetchUserProfile(username) {
+    const res = await fetch(`https://api.github.com/users/${username}`);
+    if (!res.ok) return null;
+    return await res.json();
+  }
+
+  async function addUserMarker(user) {
+    if (!user.location) return;
+    try {
+      const geo = await geocodeLocation(user.location);
+      const marker = L.marker([geo.lat, geo.lon]).addTo(map);
+      marker.bindPopup(`
+        <strong>${user.login}</strong><br/>
+        <a href="${user.html_url}" target="_blank">GitHub Profile</a><br/>
+        Location: ${user.location}<br/>
+        Geocoded: ${geo.name}
+      `);
+      markers.push(marker);
+      usersData.push({
+        username: user.login,
+        profile_url: user.html_url,
+        location: user.location,
+        geocoded_location: geo.name,
+        lat: geo.lat,
+        lon: geo.lon
+      });
+    } catch { /* Ignore failed geocodes */ }
+  }
+
+  async function search(location) {
+    clearMap();
+    setStatus('Geocoding...');
+    let geo;
+    try {
+      geo = await geocodeLocation(location);
+      map.setView([geo.lat, geo.lon], 8);
+    } catch (err) {
+      setStatus(err.message, true);
+      return;
+    }
+
+    setStatus('Searching users...');
+    const maxPages = 5;
+    let count = 0;
+    for (let page = 1; page <= maxPages; page++) {
+      try {
+        const data = await fetchGitHubUsers(location, page);
+        for (let user of data.items) {
+          const profile = await fetchUserProfile(user.login);
+          if (profile && profile.location) {
+            await addUserMarker(profile);
+            count++;
+          }
+        }
+        if (data.items.length < 30) break;
+      } catch (err) {
+        setStatus('GitHub rate limit or error.', true);
+        return;
+      }
+    }
+
+    setStatus(`✅ Found ${count} users`);
+    exportBtn.disabled = count === 0;
+  }
+
+  searchBtn.addEventListener('click', () => {
+    const location = locationInput.value.trim();
+    if (!location) return alert('Please enter a location.');
+    currentLocation = location;
+    search(location);
+    clearInterval(autoRefresh);
+    autoRefresh = setInterval(() => {
+      console.log('Auto-refresh...');
+      search(currentLocation);
+    }, 5000);
+  });
+
+  reloadBtn.addEventListener('click', () => {
+    if (!currentLocation) return;
+    search(currentLocation);
+  });
+
+  exportBtn.addEventListener('click', () => {
+    if (!usersData.length) return alert('Nothing to export');
+    let csv = 'Username,Profile URL,Location,Geocoded Location,Latitude,Longitude\n';
+    usersData.forEach(u => {
+      csv += `"${u.username}","${u.profile_url}","${u.location}","${u.geocoded_location}",${u.lat},${u.lon}\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'github_users.csv';
+    a.click();
+  });
+
+  locationInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') searchBtn.click();
+  });
+</script>
+</body>
+</html>

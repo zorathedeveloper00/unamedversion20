@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Graphic Map Finder - Localhost/Website Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+background-image: url('https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSFVOZ2CsKQIPT0Lk06f5bNALaBIuEhMWppBg&s');
+      color: red;
+    }
+
+    header {
+background: rgba(0, 0, 0, 0.5);
+      padding: 1rem;
+      text-align: center;
+      font-size: 1.5rem;
+      color: red;
+    }
+
+    .container {
+      padding: 1rem;
+      max-width: 1000px;
+      margin: auto;
+    }
+
+    .input-group {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 1rem;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      padding: 0.5rem;
+      border: 1px solid red;
+      border-radius: 5px;
+background: rgba(0, 0, 0, 0.5);
+      color: red;
+    }
+
+    button {
+      padding: 0.5rem 1rem;
+      border: none;
+      background: red;
+      color: green;
+      font-weight: bold;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    #map {
+      height: 500px;
+      margin-top: 1rem;
+      border-radius: 10px;
+      border: 2px solid red;
+    }
+
+    .info {
+      margin-top: 1rem;
+background: rgba(0, 0, 0, 0.5);
+      padding: 1rem;
+      border-radius: 8px;
+    }
+
+    .info strong {
+      color: red;
+    }
+
+    @media (max-width: 600px) {
+      .input-group {
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<header>🌍 Graphic Map Finder – Localhost/Website IP Tracker</header>
+
+<div class="container">
+  <div class="input-group">
+    <input type="text" id="targetInput" placeholder="Enter domain or IP (e.g. example.com or 127.0.0.1)" />
+    <button onclick="track()">Track</button>
+  </div>
+
+  <div id="map"></div>
+  <div class="info" id="infoBox" style="display:none;"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+  const map = L.map('map').setView([20, 0], 2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: 'Map data © OpenStreetMap contributors'
+  }).addTo(map);
+
+  const infoBox = document.getElementById("infoBox");
+
+  async function track() {
+    const input = document.getElementById("targetInput").value.trim();
+    if (!input) return alert("Enter a valid domain or IP address.");
+
+    let ip = input;
+
+    // Try to resolve domain to IP
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip) && input !== 'localhost') {
+      try {
+        const resolved = await fetch(`https://dns.google/resolve?name=${input}&type=A`)
+          .then(res => res.json());
+        ip = resolved.Answer?.[0]?.data || ip;
+      } catch (e) {
+        alert("Failed to resolve domain.");
+        return;
+      }
+    }
+
+    // Handle localhost
+    if (input === 'localhost' || ip === '127.0.0.1') {
+      alert("Localhost (127.0.0.1) is your machine and cannot be geolocated.");
+      return;
+    }
+
+    try {
+      const data = await fetch(`https://ipapi.co/${ip}/json/`).then(res => res.json());
+      if (data.error) throw new Error();
+
+      map.setView([data.latitude, data.longitude], 10);
+      L.marker([data.latitude, data.longitude])
+        .addTo(map)
+        .bindPopup(`<b>${ip}</b><br>${data.city}, ${data.country_name}`)
+        .openPopup();
+
+      infoBox.style.display = "block";
+      infoBox.innerHTML = `
+        <p><strong>IP:</strong> ${data.ip}</p>
+        <p><strong>City:</strong> ${data.city}</p>
+        <p><strong>Region:</strong> ${data.region}</p>
+        <p><strong>Country:</strong> ${data.country_name}</p>
+        <p><strong>ISP:</strong> ${data.org}</p>
+        <p><strong>ASN:</strong> ${data.asn}</p>
+        <p><strong>Latitude:</strong> ${data.latitude}</p>
+        <p><strong>Longitude:</strong> ${data.longitude}</p>
+      `;
+    } catch (err) {
+      alert("Failed to fetch geolocation data.");
+    }
+  }
+</script>
+
+</body>
+</html>
